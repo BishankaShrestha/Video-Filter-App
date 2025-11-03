@@ -29,7 +29,6 @@ from filters.edge_filters import (
 # Page configuration
 st.set_page_config(
     page_title="VideoVision: Smart Video Frame Filtering App",
-    page_icon="🎬",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -178,13 +177,70 @@ def play_video():
     else:
         st.session_state.is_playing = False  # End of video
 
+def build_point_cloud_from_image(image_bgr, height_scale=1.0, step=4):
+    """Create an Open3D point cloud from a BGR image using intensity as height.
+
+    Args:
+        image_bgr: HxWx3 uint8 OpenCV image in BGR format.
+        height_scale: Multiplier for the Z (height) derived from intensity.
+        step: Subsampling step to reduce number of points.
+
+    Returns:
+        o3d.geometry.PointCloud instance.
+    """
+    if image_bgr is None:
+        raise ValueError("Input image is None")
+
+    if step < 1:
+        step = 1
+
+    height, width = image_bgr.shape[:2]
+
+    # Colors from RGB, normalized to [0,1]
+    image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+    colors = image_rgb[0:height:step, 0:width:step].astype(np.float32) / 255.0
+
+    # Height (Z) from grayscale intensity centered around 0
+    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    gray_sub = gray[0:height:step, 0:width:step].astype(np.float32) / 255.0
+    z = (gray_sub - 0.5) * 2.0 * float(height_scale)
+
+    # XY grid in image coordinates, scaled to [-1, 1]
+    ys, xs = np.mgrid[0:height:step, 0:width:step].astype(np.float32)
+    xs_norm = (xs / max(width - 1, 1)) * 2.0 - 1.0
+    ys_norm = (ys / max(height - 1, 1)) * 2.0 - 1.0
+
+    points = np.stack([xs_norm, -ys_norm, z], axis=-1).reshape(-1, 3)
+    colors_flat = colors.reshape(-1, 3)
+
+    return points, colors_flat
+
+def compute_motion_heatmap(current_bgr, previous_bgr, threshold=20, blur_kernel=5):
+    """Compute motion heatmap from two consecutive BGR frames.
+
+    Returns a BGR heatmap image where high motion regions are highlighted.
+    """
+    if current_bgr is None or previous_bgr is None:
+        raise ValueError("Both current and previous frames are required")
+    if blur_kernel % 2 == 0:
+        blur_kernel += 1
+    current_gray = cv2.cvtColor(current_bgr, cv2.COLOR_BGR2GRAY)
+    previous_gray = cv2.cvtColor(previous_bgr, cv2.COLOR_BGR2GRAY)
+    diff = cv2.absdiff(current_gray, previous_gray)
+    if blur_kernel > 1:
+        diff = cv2.GaussianBlur(diff, (blur_kernel, blur_kernel), 0)
+    _, motion_mask = cv2.threshold(diff, threshold, 255, cv2.THRESH_TOZERO)
+    norm = cv2.normalize(motion_mask, None, 0, 255, cv2.NORM_MINMAX)
+    heatmap = cv2.applyColorMap(norm.astype(np.uint8), cv2.COLORMAP_JET)
+    return heatmap
+
 def main():
     # Main header
     st.markdown('<h1 class="main-header">🎬 VideoVision: Smart Video Frame Filtering App</h1>', unsafe_allow_html=True)
     
     # Sidebar for controls
     with st.sidebar:
-        st.header("🎛️ Controls")
+        st.header("Controls")
         
         # File upload
         uploaded_file = st.file_uploader(
@@ -218,33 +274,36 @@ def main():
             video_info = st.session_state.video_info
             
             if video_info['total_frames'] > 0:
-                st.success(f"✅ Video loaded successfully!")
-                st.info(f"📊 **Video Info:**\n- Frames: {video_info['total_frames']}\n- Resolution: {video_info['width']}x{video_info['height']}\n- FPS: {video_info['fps']:.2f}")
+                st.success(f" Video loaded successfully!")
+                st.info(f"Video Info:\n- Frames: {video_info['total_frames']}\n- Resolution: {video_info['width']}x{video_info['height']}\n- FPS: {video_info['fps']:.2f}")
                 
                 # Video Player Section
-                st.subheader("🎬 Video Player")
+                st.subheader(" Video Player")
                 
                 col1, col2, col3, col4 = st.columns(4)
                 
+            # """
+            # Commented out video player as some latency issue is there.
+            #     with col1:
+            #         if st.button("▶️ Play", disabled=st.session_state.is_playing):
+            #             st.session_state.is_playing = True
+            #             st.session_state.last_play_time = time.time()
+            #             st.rerun()
+                
+            #     with col2:
+            #         if st.button("⏸️ Pause", disabled=not st.session_state.is_playing):
+            #             st.session_state.is_playing = False
+            #             st.rerun()
+                
+            #     with col3:
+            #         if st.button("⏹️ Stop"):
+            #             st.session_state.is_playing = False
+            #             st.session_state.current_frame_number = 0
+            #             st.rerun()
+            #     """
+                
                 with col1:
-                    if st.button("▶️ Play", disabled=st.session_state.is_playing):
-                        st.session_state.is_playing = True
-                        st.session_state.last_play_time = time.time()
-                        st.rerun()
-                
-                with col2:
-                    if st.button("⏸️ Pause", disabled=not st.session_state.is_playing):
-                        st.session_state.is_playing = False
-                        st.rerun()
-                
-                with col3:
-                    if st.button("⏹️ Stop"):
-                        st.session_state.is_playing = False
-                        st.session_state.current_frame_number = 0
-                        st.rerun()
-                
-                with col4:
-                    if st.button("📸 Extract Current Frame", type="primary"):
+                    if st.button("Extract Current Frame", type="primary"):
                         frame = get_current_frame_from_video()
                         if frame is not None:
                             st.session_state.current_frame = frame
@@ -253,7 +312,7 @@ def main():
                             st.error("Failed to extract frame.")
                 
                 # Manual step button for debugging
-                if st.button("⏭️ Step Forward"):
+                if st.button("Step Forward"):
                     if st.session_state.current_frame_number < video_info['total_frames'] - 1:
                         st.session_state.current_frame_number += 1
                         st.rerun()
@@ -261,7 +320,7 @@ def main():
                         st.info("End of video reached")
                 
                 # Frame navigation
-                st.subheader("🎯 Frame Navigation")
+                st.subheader("Frame Navigation")
                 
                 # Manual frame selection
                 selected_frame = st.slider(
@@ -278,7 +337,7 @@ def main():
                     st.session_state.is_playing = False  # Stop playing when manually navigating
                 
                 # Display current frame info
-                st.info(f"📷 Current frame: {st.session_state.current_frame_number} / {video_info['total_frames'] - 1}")
+                st.info(f"Current frame: {st.session_state.current_frame_number} / {video_info['total_frames'] - 1}")
                 
                 # Auto-play functionality moved to main area
                 
@@ -286,7 +345,7 @@ def main():
                 
                 # Filter selection (only show if frame is extracted)
                 if st.session_state.current_frame is not None:
-                    st.subheader("🎨 Filter Selection")
+                    st.subheader("Filter Selection")
                     filters = {
                         'grayscale': 'Grayscale',
                         'blur': 'Blur',
@@ -303,7 +362,7 @@ def main():
                     }
                     
                     # Filter selection dropdown
-                    st.write("**Select Filter:**")
+                    st.write("Select Filter:")
                     selected_filter = st.selectbox(
                         "Choose a filter to apply:",
                         options=list(filters.keys()),
@@ -332,7 +391,7 @@ def main():
                     
                     # Filter parameters
                     if st.session_state.selected_filter:
-                        st.subheader(f"⚙️ {filters[st.session_state.selected_filter]} Parameters")
+                        st.subheader(f" {filters[st.session_state.selected_filter]} Parameters")
                         
                         # Initialize filter parameters if not exists
                         if st.session_state.selected_filter not in st.session_state.filter_params:
@@ -366,7 +425,7 @@ def main():
                         st.session_state.filter_params[st.session_state.selected_filter] = params
                         
                         # Apply filter button
-                        if st.button("🔄 Apply Filter", type="primary"):
+                        if st.button("Apply Filter", type="primary"):
                             with st.spinner("Applying filter..."):
                                 filtered_frame = apply_filter(
                                     st.session_state.current_frame, 
@@ -381,12 +440,12 @@ def main():
             else:
                 st.error("Invalid video file or unable to read video information.")
         else:
-            st.info("👆 Please upload a video file to get started!")
+            st.info("Please upload a video file to get started!")
     
     # Main content area
     if st.session_state.temp_video_path is not None and st.session_state.video_info is not None:
         # Live Video Preview in main area
-        st.subheader("📺 Live Video Preview")
+        st.subheader("Live Video Preview")
         
         col1, col2 = st.columns([1, 2])
         
@@ -398,25 +457,67 @@ def main():
                 st.image(preview_rgb, caption=f"Frame {st.session_state.current_frame_number}", use_column_width=True)
             else:
                 st.info("No frame available for preview")
+        # """
+        # Commented out video state as some latency issue is there.
+        # with col2:
+        #     st.info(f"Current Frame:{st.session_state.current_frame_number} / {st.session_state.video_info['total_frames'] - 1}")
+        #     if st.session_state.is_playing:
+        #         st.success(" Video is playing")
+        #         st.write(f"FPS:{st.session_state.video_info['fps']:.2f}")
+        #         st.write(f"Frame Duration: {1.0/st.session_state.video_info['fps']:.3f}s")
+        #     else:
+        #         st.info("⏸ Video is paused")
+        # """
+
         
-        with col2:
-            st.info(f"**Current Frame:** {st.session_state.current_frame_number} / {st.session_state.video_info['total_frames'] - 1}")
-            if st.session_state.is_playing:
-                st.success("▶️ Video is playing")
-                st.write(f"**FPS:** {st.session_state.video_info['fps']:.2f}")
-                st.write(f"**Frame Duration:** {1.0/st.session_state.video_info['fps']:.3f}s")
-            else:
-                st.info("⏸️ Video is paused")
+        # Some bug on auto-play functionality.
         
-        # Auto-play functionality with proper timing
-        if st.session_state.is_playing:
-            current_time = time.time()
-            frame_duration = 1.0 / st.session_state.video_info['fps']
+        # # Auto-play functionality with proper timing
+        # if st.session_state.is_playing:
+        #     current_time = time.time()
+        #     frame_duration = 1.0 / st.session_state.video_info['fps']
             
-            if current_time - st.session_state.last_play_time >= frame_duration:
-                play_video()
-                st.session_state.last_play_time = current_time
-                st.rerun()
+        #     if current_time - st.session_state.last_play_time >= frame_duration:
+        #         play_video()
+        #         st.session_state.last_play_time = current_time
+        #         st.rerun()
+        
+
+        # Motion Heatmap (between consecutive frames)
+        #In this code, we are comparing N and N-10 frames to compute motion heatmap to show differences.
+        #This version will later be upgraded to choose user to select the frames.
+        with st.expander("Motion Heatmap", expanded=False):
+            if st.session_state.video_info['total_frames'] < 2:
+                st.info("Need at least two frames to compute motion.")
+            else:
+                threshold = st.slider("Sensitivity (Threshold)", 1, 100, 20)
+                blur_ksize = st.slider("Blur Kernel (odd)", 1, 25, 5, step=2)
+                overlay_alpha = st.slider("Overlay Alpha", 0.0, 1.0, 0.5, 0.05)
+
+                current_fn = st.session_state.current_frame_number
+                if current_fn == 0:
+                    st.info("Move to a later frame to compare with the previous one.")
+                else:
+                    try:
+                        prev_bgr = extract_frame(st.session_state.temp_video_path, current_fn - 1)
+                        curr_bgr = get_current_frame_from_video()
+                        if prev_bgr is None or curr_bgr is None:
+                            st.error("Unable to read frames for motion heatmap.")
+                        else:
+                            heatmap_bgr = compute_motion_heatmap(curr_bgr, prev_bgr, threshold=threshold, blur_kernel=blur_ksize)
+                            heatmap_rgb = bgr_to_rgb(heatmap_bgr)
+                            st.image(resize_frame(heatmap_rgb, max_width=480, max_height=160), caption="Motion Heatmap", use_column_width=False, width=480)
+
+                            # Optional overlay on current frame
+                            overlay = st.checkbox("Show overlay on current frame", value=False)
+                            if overlay:
+                                curr_rgb = bgr_to_rgb(curr_bgr)
+                                # Convert both to float for blending
+                                overlay_img = cv2.addWeighted(curr_rgb.astype(np.float32), 1 - overlay_alpha, heatmap_rgb.astype(np.float32), overlay_alpha, 0)
+                                overlay_img = np.clip(overlay_img, 0, 255).astype(np.uint8)
+                                st.image(resize_frame(overlay_img, max_width=480, max_height=160), caption="Overlay", use_column_width=False, width=480)
+                    except Exception as e:
+                        st.error(f"Error computing motion heatmap: {e}")
         
         # Show extracted frame processing if available
         if st.session_state.current_frame is not None:
@@ -462,6 +563,36 @@ def main():
                     st.image(resized_filtered, use_column_width=False, width=480)
                 else:
                     st.info("No filtered frame available. Apply a filter first.")
+
+            # 3D Point Cloud View (Plotly only)
+            with st.expander("🟣 3D Point Cloud View", expanded=False):
+                source_choice = st.selectbox(
+                    "Source Image",
+                    ["Original Frame", "Filtered Frame (if available)"]
+                )
+                step = st.slider("Downsample Step (higher = fewer points)", 1, 20, 4)
+                height_scale = st.slider("Height Scale", 0.1, 5.0, 1.0, 0.1)
+
+                if st.button("Show Point Cloud", type="primary"):
+                    src_bgr = None
+                    if source_choice == "Original Frame":
+                        src_bgr = st.session_state.current_frame
+                    else:
+                        if hasattr(st.session_state, 'filtered_frame') and st.session_state.filtered_frame is not None:
+                            src_bgr = st.session_state.filtered_frame
+                        else:
+                            st.error("Filtered frame not available. Apply a filter or choose Original Frame.")
+                    if src_bgr is not None:
+                        try:
+                            points, colors = build_point_cloud_from_image(src_bgr, height_scale=height_scale, step=step)
+                            import plotly.graph_objects as go
+                            x, y, z = points[:,0], points[:,1], points[:,2]
+                            marker=dict(size=2, color=colors, opacity=0.9)
+                            fig = go.Figure(data=[go.Scatter3d(x=x, y=y, z=z, mode='markers', marker=marker)])
+                            fig.update_layout(scene=dict(xaxis=dict(title='X'), yaxis=dict(title='Y'), zaxis=dict(title='Z')), margin=dict(l=0, r=0, b=0, t=0))
+                            st.plotly_chart(fig, use_container_width=True)
+                        except Exception as e:
+                            st.error(f"Failed to create/show point cloud: {e}")
             
             # Save and download section
             if hasattr(st.session_state, 'filtered_frame') and st.session_state.filtered_frame is not None:
