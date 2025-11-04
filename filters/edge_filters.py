@@ -220,41 +220,63 @@ def apply_edge_enhancement(frame: np.ndarray, strength: float = 1.0) -> np.ndarr
     return cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
 
 
-def apply_hough_transform(frame: np.ndarray, threshold: int = 100, min_line_length: int = 50, max_line_gap: int = 10) -> np.ndarray:
-    """
-    Apply Hough line transform to detect lines in the frame.
+# def apply_hough_transform(frame: np.ndarray, threshold: int = 100, min_line_length: int = 50, max_line_gap: int = 10) -> np.ndarray:
+#     """
+#     Apply Hough line transform to detect lines in the frame.
     
-    Args:
-        frame: Input frame in BGR format
-        threshold: Accumulator threshold for line detection
-        min_line_length: Minimum line length
-        max_line_gap: Maximum gap between line segments
+#     Args:
+#         frame: Input frame in BGR format
+#         threshold: Accumulator threshold for line detection
+#         min_line_length: Minimum line length
+#         max_line_gap: Maximum gap between line segments
         
-    Returns:
-        Frame with detected lines drawn
-    """
+#     Returns:
+#         Frame with detected lines drawn
+#     """
+#     if frame is None:
+#         return None
+        
+#     # Convert to grayscale
+#     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    
+#     # Apply edge detection
+#     edges = cv2.Canny(gray, 50, 150)
+    
+#     # Apply Hough line transform
+#     lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold, 
+#                         minLineLength=min_line_length, maxLineGap=max_line_gap)
+
+    
+#     # Create output image
+#     result = frame.copy()
+    
+#     # Draw lines if any are detected
+#     if lines is not None:
+#         for line in lines:
+#             x1, y1, x2, y2 = line[0]
+#             cv2.line(result, (x1, y1), (x2, y2), (0, 255, 0), 2)
+    
+#     return result
+def apply_hough_transform(frame: np.ndarray, threshold: int = 120, min_line_length: int = 80, max_line_gap: int = 5) -> np.ndarray:
     if frame is None:
         return None
-        
-    # Convert to grayscale
+
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    
-    # Apply edge detection
-    edges = cv2.Canny(gray, 50, 150)
-    
-    # Apply Hough line transform
-    lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold, min_line_length, max_line_gap)
-    
-    # Create output image
+    blurred = cv2.GaussianBlur(gray, (5, 5), 1.5)
+
+    edges = cv2.Canny(blurred, 50, 150)
+
+    lines = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold,
+                            minLineLength=min_line_length, maxLineGap=max_line_gap)
+
     result = frame.copy()
-    
-    # Draw lines if any are detected
     if lines is not None:
         for line in lines:
             x1, y1, x2, y2 = line[0]
             cv2.line(result, (x1, y1), (x2, y2), (0, 255, 0), 2)
-    
+
     return result
+
 
 
 def apply_dilation(frame: np.ndarray, kernel_size: int = 5, iterations: int = 1) -> np.ndarray:

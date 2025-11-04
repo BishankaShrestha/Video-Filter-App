@@ -23,7 +23,7 @@ from filters.basic_filters import (
 )
 from filters.edge_filters import (
     apply_canny, apply_sobel, apply_laplacian,
-    apply_prewitt
+    apply_prewitt, apply_hough_transform
 )
 
 # Page configuration
@@ -123,14 +123,6 @@ def apply_filter(frame, filter_name, params):
             min_line_length = params.get('min_line_length', 50)
             max_line_gap = params.get('max_line_gap', 10)
             return apply_hough_transform(frame, threshold, min_line_length, max_line_gap)
-        elif filter_name == 'dilation':
-            kernel_size = params.get('kernel_size', 5)
-            iterations = params.get('iterations', 1)
-            return apply_dilation(frame, kernel_size, iterations)
-        elif filter_name == 'erosion':
-            kernel_size = params.get('kernel_size', 5)
-            iterations = params.get('iterations', 1)
-            return apply_erosion(frame, kernel_size, iterations)
         else:
             return frame
     except Exception as e:
@@ -355,10 +347,7 @@ def main():
                         'brightness': 'Brightness',
                         'contrast': 'Contrast',
                         'laplacian': 'Laplacian',
-                        'prewitt': 'Prewitt',
                         'hough_transform': 'Hough Transform',
-                        'dilation': 'Dilation',
-                        'erosion': 'Erosion'
                     }
                     
                     # Filter selection dropdown
@@ -482,42 +471,6 @@ def main():
         #         st.session_state.last_play_time = current_time
         #         st.rerun()
         
-
-        # Motion Heatmap (between consecutive frames)
-        #In this code, we are comparing N and N-10 frames to compute motion heatmap to show differences.
-        #This version will later be upgraded to choose user to select the frames.
-        with st.expander("Motion Heatmap", expanded=False):
-            if st.session_state.video_info['total_frames'] < 2:
-                st.info("Need at least two frames to compute motion.")
-            else:
-                threshold = st.slider("Sensitivity (Threshold)", 1, 100, 20)
-                blur_ksize = st.slider("Blur Kernel (odd)", 1, 25, 5, step=2)
-                overlay_alpha = st.slider("Overlay Alpha", 0.0, 1.0, 0.5, 0.05)
-
-                current_fn = st.session_state.current_frame_number
-                if current_fn == 0:
-                    st.info("Move to a later frame to compare with the previous one.")
-                else:
-                    try:
-                        prev_bgr = extract_frame(st.session_state.temp_video_path, current_fn - 1)
-                        curr_bgr = get_current_frame_from_video()
-                        if prev_bgr is None or curr_bgr is None:
-                            st.error("Unable to read frames for motion heatmap.")
-                        else:
-                            heatmap_bgr = compute_motion_heatmap(curr_bgr, prev_bgr, threshold=threshold, blur_kernel=blur_ksize)
-                            heatmap_rgb = bgr_to_rgb(heatmap_bgr)
-                            st.image(resize_frame(heatmap_rgb, max_width=480, max_height=160), caption="Motion Heatmap", use_column_width=False, width=480)
-
-                            # Optional overlay on current frame
-                            overlay = st.checkbox("Show overlay on current frame", value=False)
-                            if overlay:
-                                curr_rgb = bgr_to_rgb(curr_bgr)
-                                # Convert both to float for blending
-                                overlay_img = cv2.addWeighted(curr_rgb.astype(np.float32), 1 - overlay_alpha, heatmap_rgb.astype(np.float32), overlay_alpha, 0)
-                                overlay_img = np.clip(overlay_img, 0, 255).astype(np.uint8)
-                                st.image(resize_frame(overlay_img, max_width=480, max_height=160), caption="Overlay", use_column_width=False, width=480)
-                    except Exception as e:
-                        st.error(f"Error computing motion heatmap: {e}")
         
         # Show extracted frame processing if available
         if st.session_state.current_frame is not None:
@@ -526,7 +479,7 @@ def main():
             # Display mode selection
             display_mode = st.radio(
                 "Display Mode",
-                ["Original", "Filtered", "Side by Side"],
+                ["Side by Side"],
                 horizontal=True
             )
             
@@ -537,35 +490,35 @@ def main():
                 with col1:
                     st.subheader("📷 Original Frame")
                     original_rgb = bgr_to_rgb(st.session_state.current_frame)
-                    resized_original = resize_frame(original_rgb, max_width=360, max_height=110)
-                    st.image(resized_original, use_column_width=False, width=360)
+                    st.image(original_rgb, use_column_width=True)
+
                 
                 with col2:
                     st.subheader("🎨 Filtered Frame")
                     if hasattr(st.session_state, 'filtered_frame') and st.session_state.filtered_frame is not None:
                         filtered_rgb = bgr_to_rgb(st.session_state.filtered_frame)
-                        resized_filtered = resize_frame(filtered_rgb, max_width=360, max_height=110)
-                        st.image(resized_filtered, use_column_width=False, width=360)
+                        st.image(filtered_rgb, use_column_width=True)
+
                     else:
                         st.info("No filtered frame available. Apply a filter first.")
             
-            elif display_mode == "Original":
-                st.subheader("📷 Original Frame")
-                original_rgb = bgr_to_rgb(st.session_state.current_frame)
-                resized_original = resize_frame(original_rgb, max_width=480, max_height=160)
-                st.image(resized_original, use_column_width=False, width=480)
+            # elif display_mode == "Original":
+            #     st.subheader("📷 Original Frame")
+            #     original_rgb = bgr_to_rgb(st.session_state.current_frame)
+            #     st.image(original_rgb, use_column_width=True)
+
             
-            elif display_mode == "Filtered":
-                st.subheader("🎨 Filtered Frame")
-                if hasattr(st.session_state, 'filtered_frame') and st.session_state.filtered_frame is not None:
-                    filtered_rgb = bgr_to_rgb(st.session_state.filtered_frame)
-                    resized_filtered = resize_frame(filtered_rgb, max_width=480, max_height=160)
-                    st.image(resized_filtered, use_column_width=False, width=480)
-                else:
-                    st.info("No filtered frame available. Apply a filter first.")
+            # elif display_mode == "Filtered":
+            #     st.subheader("🎨 Filtered Frame")
+            #     if hasattr(st.session_state, 'filtered_frame') and st.session_state.filtered_frame is not None:
+            #         filtered_rgb = bgr_to_rgb(st.session_state.filtered_frame)
+            #         st.image(filtered_rgb, use_column_width=True)
+
+            #     else:
+            #         st.info("No filtered frame available. Apply a filter first.")
 
             # 3D Point Cloud View (Plotly only)
-            with st.expander("🟣 3D Point Cloud View", expanded=False):
+            with st.expander("3D Point Cloud View", expanded=False):
                 source_choice = st.selectbox(
                     "Source Image",
                     ["Original Frame", "Filtered Frame (if available)"]
@@ -593,37 +546,72 @@ def main():
                             st.plotly_chart(fig, use_container_width=True)
                         except Exception as e:
                             st.error(f"Failed to create/show point cloud: {e}")
-            
+         # Motion Heatmap (between consecutive frames)
+        #In this code, we are comparing N and N-10 frames to compute motion heatmap to show differences.
+        #This version will later be upgraded to choose user to select the frames.
+        with st.expander("Motion Heatmap", expanded=False):
+            if st.session_state.video_info['total_frames'] < 2:
+                st.info("Need at least two frames to compute motion.")
+            else:
+                threshold = st.slider("Sensitivity (Threshold)", 1, 100, 20)
+                blur_ksize = st.slider("Blur Kernel (odd)", 1, 25, 5, step=2)
+                overlay_alpha = st.slider("Overlay Alpha", 0.0, 1.0, 0.5, 0.05)
+
+                current_fn = st.session_state.current_frame_number
+                if current_fn == 0:
+                    st.info("Move to a later frame to compare with the previous one.")
+                else:
+                    try:
+                        prev_bgr = extract_frame(st.session_state.temp_video_path, current_fn - 10)
+                        curr_bgr = get_current_frame_from_video()
+                        if prev_bgr is None or curr_bgr is None:
+                            st.error("Unable to read frames for motion heatmap.")
+                        else:
+                            heatmap_bgr = compute_motion_heatmap(curr_bgr, prev_bgr, threshold=threshold, blur_kernel=blur_ksize)
+                            heatmap_rgb = bgr_to_rgb(heatmap_bgr)
+                            st.image(resize_frame(heatmap_rgb, max_width=480, max_height=160), caption="Motion Heatmap", use_column_width=False, width=480)
+
+                            # Optional overlay on current frame
+                            overlay = st.checkbox("Show overlay on current frame", value=False)
+                            if overlay:
+                                curr_rgb = bgr_to_rgb(curr_bgr)
+                                # Convert both to float for blending
+                                overlay_img = cv2.addWeighted(curr_rgb.astype(np.float32), 1 - overlay_alpha, heatmap_rgb.astype(np.float32), overlay_alpha, 0)
+                                overlay_img = np.clip(overlay_img, 0, 255).astype(np.uint8)
+                                st.image(resize_frame(overlay_img, max_width=480, max_height=160), caption="Overlay", use_column_width=False, width=480)
+                    except Exception as e:
+                        st.error(f"Error computing motion heatmap: {e}")
+
             # Save and download section
-            if hasattr(st.session_state, 'filtered_frame') and st.session_state.filtered_frame is not None:
-                st.subheader("💾 Save & Download")
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    if st.button("💾 Save Filtered Frame", type="primary"):
-                        # Save filtered frame
-                        temp_path = save_frame_as_temp_file(st.session_state.filtered_frame, f"filtered_frame_{st.session_state.current_frame_number}")
-                        if temp_path:
-                            st.success(f"Frame saved as: {os.path.basename(temp_path)}")
-                            st.session_state.saved_frame_path = temp_path
-                
-                with col2:
-                    if hasattr(st.session_state, 'saved_frame_path') and st.session_state.saved_frame_path:
-                        # Create download button
-                        with open(st.session_state.saved_frame_path, "rb") as file:
-                            st.download_button(
-                                label="⬇️ Download Filtered Frame",
-                                data=file.read(),
-                                file_name=f"filtered_frame_{st.session_state.current_frame_number}.jpg",
-                                mime="image/jpeg"
-                            )
+        if hasattr(st.session_state, 'filtered_frame') and st.session_state.filtered_frame is not None:
+            st.subheader("Save & Download")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("Save Filtered Frame", type="primary"):
+                    # Save filtered frame
+                    temp_path = save_frame_as_temp_file(st.session_state.filtered_frame, f"filtered_frame_{st.session_state.current_frame_number}")
+                    if temp_path:
+                        st.success(f"Frame saved as: {os.path.basename(temp_path)}")
+                        st.session_state.saved_frame_path = temp_path
+            
+            with col2:
+                if hasattr(st.session_state, 'saved_frame_path') and st.session_state.saved_frame_path:
+                    # Create download button
+                    with open(st.session_state.saved_frame_path, "rb") as file:
+                        st.download_button(
+                            label="Download Filtered Frame",
+                            data=file.read(),
+                            file_name=f"filtered_frame_{st.session_state.current_frame_number}.jpg",
+                            mime="image/jpeg"
+                        )
     
     else:
         # Welcome message
         st.markdown("""
         <div style="text-align: center; margin-top: 3rem;">
-            <h2>Welcome to VideoVision! 🎬</h2>
+            <h2>Welcome to VideoVision! </h2>
             <p style="font-size: 1.2rem; color: #666;">
                 Upload a video file to start filtering and processing frames.
             </p>
